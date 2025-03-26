@@ -108,7 +108,7 @@ conversation_summary <- con %>%
 combined_data <- conversation_summary %>%
     left_join(a %>% filter(str_detect(name, "Reading Elaboration")), by = "student_id")
 
-conversation_metrics
+
 ###############################################
 ##########################################
 ```
@@ -164,7 +164,46 @@ Be sure to use all students in the `con` dataset as the basis, not just those wh
 ####### BEGIN INPUT: Define outcome ###########
 ###############################################
 
-# add code here
+students <- unique(con$student_id)
+reading_activity <- a%>% filter(str_detect(name, "Reading Elaboration"))
+reading_activity <- reading_activity%>% filter(!str_detect(name, "Week 8"))
+reading_activity <- reading_activity %>%
+  filter(str_detect(name, "Reading Elaboration")) %>%
+  mutate(activity_type = case_when(
+    str_detect(name, "2") ~ "2025-02-01 05:00:00",
+    str_detect(name, "3") ~ "2025-02-08 05:00:00",
+    str_detect(name, "6") ~ "2025-03-01 05:00:00",
+    str_detect(name, "7") ~ "2025-03-08 05:00:00",
+  ))
+all_combinations <- crossing(student_id=students,
+                             activity_id= reading_activity$id)
+all_combinations <- all_combinations %>%
+  mutate(deadline = case_when(
+    str_detect(activity_id, "7877f09d-5905-4c41-ae01-490a170b2ed0") ~ "2025-02-01 05:00:00",
+    str_detect(activity_id, "5b586b96-beba-44fa-be38-b911f9af7f86") ~ "2025-02-08 05:00:00",
+    str_detect(activity_id, "c5334167-f212-4d5d-9809-aaa3760097c6") ~ "2025-02-08 05:00:00",
+    str_detect(activity_id, "7b005d82-6810-439b-a033-4832a253c3e6") ~ "2025-03-01 05:00:00",
+    str_detect(activity_id, "4b76c702-78d0-4c5d-874c-5ee55a8b2921") ~ "2025-03-08 05:00:00",
+  ))
+all_combinations <- all_combinations %>%
+  mutate(name = case_when(
+    str_detect(activity_id, "7877f09d-5905-4c41-ae01-490a170b2ed0") ~ "Week 2 Reading Elaboration: Mining Big Data in Education",
+    str_detect(activity_id, "5b586b96-beba-44fa-be38-b911f9af7f86") ~ "Week 3 Reading Elaboration: Let's Debate!",
+    str_detect(activity_id, "c5334167-f212-4d5d-9809-aaa3760097c6") ~ "Week 3 Reading Elaboration: Algorithmic Bias and Fairness",
+    str_detect(activity_id, "7b005d82-6810-439b-a033-4832a253c3e6") ~ "Week 6 Reading Elaboration: Let's Debate Experiments!",
+    str_detect(activity_id, "4b76c702-78d0-4c5d-874c-5ee55a8b2921") ~ "Week 7 Reading Elaboration: Multimedia Learning",
+  ))
+completion_data <- all_combinations %>%
+  left_join(reading_activity %>% select(id, student_id, completed),
+           by = c("student_id", "activity_id" = "id"))
+completion_data <- completion_data %>%
+  mutate(incomplete = ifelse(is.na(completed) | completed == FALSE, 1, 0))
+completion_data <- completion_data %>%
+  select(-completed)
+completion_data
+
+
+
 
 ############################################### 
 ############################################### 
@@ -203,8 +242,34 @@ head(example_features)
 ############################################### 
 ###### BEGIN INPUT: Engineer features #########
 ###############################################
+#calculate_features <- function(target_deadline) {
+ # completion_data %>%
+  #  filter(deadline < target_deadline) %>%
+   # group_by(student_id) %>%
+    #summarise(
+     # n_incomplete = sum(incomplete),
+      #avg_incomplete = mean(incomplete)
+    #)
+#}
+#test_features <- calculate_features("2025-03-01 05:00:00")
+#head(test_features)
+#completion_data %>%
+  #filter(deadline < current_activity_deadline) %>%
+  #group_by(student_id) %>%
+  #summarise(n_incomplete = sum(incomplete),
+    #avg_incomplete =mean(incomplete))
 
-# add code here
+activities_features <- function(target_deadline) {
+  a %>%
+    filter(as.numeric(as.POSIXct(created_at, tz = "UTC")) < target_deadline - secs_in_day) %>%
+    group_by(student_id) %>%
+    summarise(
+      n_started = sum(started),
+      #n_started: How active is the student in starting activities?
+      completion_rate = mean(completed[started == TRUE])
+      #completion_rate: When they start something, how often do they finish it?
+    )
+}
 
 ###############################################
 ###############################################
