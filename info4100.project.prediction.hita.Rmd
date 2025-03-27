@@ -15,7 +15,7 @@ editor_options:
 ```{r warning=FALSE, message=FALSE, echo=FALSE}
 library(tidyverse)
 # This loads 2 datasets: a=activities, con=conversations
-load("info4100_hita_data.rda")
+load("~/Desktop/info/info4100_hita_data.rda" )
 ```
 
 # Introduction
@@ -164,42 +164,45 @@ Be sure to use all students in the `con` dataset as the basis, not just those wh
 ####### BEGIN INPUT: Define outcome ###########
 ###############################################
 
-students <- unique(con$student_id)
-reading_activity <- a%>% filter(str_detect(name, "Reading Elaboration"))
-reading_activity <- reading_activity%>% filter(!str_detect(name, "Week 8"))
-reading_activity <- reading_activity %>%
-  filter(str_detect(name, "Reading Elaboration")) %>%
-  mutate(activity_type = case_when(
-    str_detect(name, "2") ~ "2025-02-01 05:00:00",
-    str_detect(name, "3") ~ "2025-02-08 05:00:00",
-    str_detect(name, "6") ~ "2025-03-01 05:00:00",
-    str_detect(name, "7") ~ "2025-03-08 05:00:00",
-  ))
-all_combinations <- crossing(student_id=students,
-                             activity_id= reading_activity$id)
+library(tidyverse)
+library(lubridate)
+
+students <- con %>% distinct(student_id)
+
+reading_activity <- a %>%
+  filter(str_detect(name, "Reading Elaboration"),
+         !str_detect(name, "Week 8"))
+
+all_combinations <- crossing(
+  student_id = students$student_id,
+  activity_id = reading_activity$id
+)
+
 all_combinations <- all_combinations %>%
+  mutate(activity_id = as.character(activity_id)) %>%
   mutate(deadline = case_when(
-    str_detect(activity_id, "7877f09d-5905-4c41-ae01-490a170b2ed0") ~ "2025-02-01 05:00:00",
-    str_detect(activity_id, "5b586b96-beba-44fa-be38-b911f9af7f86") ~ "2025-02-08 05:00:00",
-    str_detect(activity_id, "c5334167-f212-4d5d-9809-aaa3760097c6") ~ "2025-02-08 05:00:00",
-    str_detect(activity_id, "7b005d82-6810-439b-a033-4832a253c3e6") ~ "2025-03-01 05:00:00",
-    str_detect(activity_id, "4b76c702-78d0-4c5d-874c-5ee55a8b2921") ~ "2025-03-08 05:00:00",
+    activity_id == "7877f09d-5905-4c41-ae01-490a170b2ed0" ~ "2025-02-01 05:00:00",
+    activity_id == "5b586b96-beba-44fa-be38-b911f9af7f86" ~ "2025-02-08 05:00:00",
+    activity_id == "c5334167-f212-4d5d-9809-aaa3760097c6" ~ "2025-02-08 05:00:00",
+    activity_id == "7b005d82-6810-439b-a033-4832a253c3e6" ~ "2025-03-01 05:00:00",
+    activity_id == "4b76c702-78d0-4c5d-874c-5ee55a8b2921" ~ "2025-03-08 05:00:00"
+  ),
+  name = case_when(
+    activity_id == "7877f09d-5905-4c41-ae01-490a170b2ed0" ~ "Week 2 Reading Elaboration: Mining Big Data in Education",
+    activity_id == "5b586b96-beba-44fa-be38-b911f9af7f86" ~ "Week 3 Reading Elaboration: Let's Debate!",
+    activity_id == "c5334167-f212-4d5d-9809-aaa3760097c6" ~ "Week 3 Reading Elaboration: Algorithmic Bias and Fairness",
+    activity_id == "7b005d82-6810-439b-a033-4832a253c3e6" ~ "Week 6 Reading Elaboration: Let's Debate Experiments!",
+    activity_id == "4b76c702-78d0-4c5d-874c-5ee55a8b2921" ~ "Week 7 Reading Elaboration: Multimedia Learning"
   ))
-all_combinations <- all_combinations %>%
-  mutate(name = case_when(
-    str_detect(activity_id, "7877f09d-5905-4c41-ae01-490a170b2ed0") ~ "Week 2 Reading Elaboration: Mining Big Data in Education",
-    str_detect(activity_id, "5b586b96-beba-44fa-be38-b911f9af7f86") ~ "Week 3 Reading Elaboration: Let's Debate!",
-    str_detect(activity_id, "c5334167-f212-4d5d-9809-aaa3760097c6") ~ "Week 3 Reading Elaboration: Algorithmic Bias and Fairness",
-    str_detect(activity_id, "7b005d82-6810-439b-a033-4832a253c3e6") ~ "Week 6 Reading Elaboration: Let's Debate Experiments!",
-    str_detect(activity_id, "4b76c702-78d0-4c5d-874c-5ee55a8b2921") ~ "Week 7 Reading Elaboration: Multimedia Learning",
-  ))
+
 completion_data <- all_combinations %>%
   left_join(reading_activity %>% select(id, student_id, completed),
-           by = c("student_id", "activity_id" = "id"))
+            by = c("student_id", "activity_id" = "id"))
+
 completion_data <- completion_data %>%
-  mutate(incomplete = ifelse(is.na(completed) | completed == FALSE, 1, 0))
-completion_data <- completion_data %>%
+  mutate(incomplete = ifelse(is.na(completed) | completed == FALSE, 1, 0)) %>%
   select(-completed)
+
 completion_data
 
 
@@ -259,18 +262,45 @@ head(example_features)
   #summarise(n_incomplete = sum(incomplete),
     #avg_incomplete =mean(incomplete))
 
-activities_features <- function(target_deadline) {
-  a %>%
-    filter(as.numeric(as.POSIXct(created_at, tz = "UTC")) < target_deadline - secs_in_day) %>%
-    group_by(student_id) %>%
-    summarise(
-      n_started = sum(started),
-      #n_started: How active is the student in starting activities?
-      completion_rate = mean(completed[started == TRUE])
-      #completion_rate: When they start something, how often do they finish it?
-    )
-}
+library(tidyverse)
+library(lubridate)
 
+# Helper: 24 hours in seconds
+secs_in_day <- 60 * 60 * 24
+
+# Add cutoff timestamp to each row in your target dataset
+completion_data <- completion_data %>%
+  mutate(
+    cutoff_utc = as.numeric(as.POSIXct(deadline, tz = "UTC")) - secs_in_day
+  )
+
+con <- con %>%
+  mutate(timestamp = as.numeric(as.POSIXct(created_at, tz = "UTC")))
+
+feature_data <- completion_data %>%
+  select(student_id, activity_id, cutoff_utc) %>%
+  pmap_dfr(function(student_id, activity_id, cutoff_utc) {
+    
+    con_sub <- con %>%
+      filter(student_id == student_id, timestamp < cutoff_utc)
+    
+    tibble(
+      student_id = student_id,
+      activity_id = activity_id,
+      num_total_msgs = nrow(con_sub),
+      num_student_msgs = sum(con_sub$system == 0),
+      num_ai_msgs = sum(con_sub$system == 1),
+      avg_student_msg_len = mean(con_sub$length_char[con_sub$system == 0], na.rm = TRUE),
+      num_chat_conversations = n_distinct(con_sub$conversation_id[is.na(con_sub$activity_step_id)]),
+      num_activity_msgs = sum(!is.na(con_sub$activity_step_id)),
+      num_unique_activities_chatted = n_distinct(con_sub$activity_step_id[!is.na(con_sub$activity_step_id)])
+    )
+  })
+
+final_data <- completion_data %>%
+  left_join(feature_data, by = c("student_id", "activity_id"))
+
+head(final_data)
 ###############################################
 ###############################################
 ```
@@ -291,11 +321,29 @@ Take all the remaining data (earlier periods for prior weeks) and store them in 
 
 # Identify last due elaboration activity for testing
 # add code here
+last_activity <- completion_data %>%
+    filter(str_detect(tolower(name), "elaboration")) %>%
+    arrange(desc(deadline)) %>%
+    slice(1)
+#2025-03-08 05:00:00
 
 # Split the dataset into train and test based on the activity_ids or periods
 # test = 
 # train = 
+week7_deadline <- as.POSIXct("2025-03-08 05:00:00", tz = "UTC")
 
+# Step 2: Get the activity_id corresponding to this deadline
+week7_id <- final_data %>%
+  filter(as.POSIXct(deadline, tz = "UTC") == week7_deadline) %>%
+  distinct(activity_id) %>%
+  pull(activity_id)
+
+# Step 3: Split into test (Week 7) and train (everything else)
+test <- final_data %>%
+  filter(activity_id == week7_id)
+
+train <- final_data %>%
+  filter(activity_id != week7_id)
 ###############################################
 ###############################################
 ```
@@ -315,16 +363,31 @@ Report your F1 score on the training data below (don't forget this!).
 
 # Fit  model to training data
 # add code here
+model <- glm(incomplete ~ num_student_msgs + avg_student_msg_len + num_chat_conversations +
+                               num_total_msgs + num_activity_msgs + num_unique_activities_chatted,
+             data = train, family = "binomial")
+# Now calculate TP/FP/FN again
 
 # Get predictions
 # add code here
+pred_probs <- predict(model, train, type = "response")
+pred_binary <- ifelse(pred_probs > 0.5, 1, 0)
+
+true_pos  <- sum(pred_binary == 1 & train$incomplete == 1)
+false_pos <- sum(pred_binary == 1 & train$incomplete == 0)
+false_neg <- sum(pred_binary == 0 & train$incomplete == 1)
 
 # Compute accuracy, recall, precision, and F1
 # add code here
-F1 = 2 / (1/recall + 1/precision)
-  
+precision <- true_pos / (true_pos + false_pos)
+recall    <- true_pos / (true_pos + false_neg)
+F1 <- 2 / (1 / recall + 1 / precision)
 # Training F1 score is ...
 F1
+
+print(true_pos)
+print(false_pos)
+print(false_neg)
 
 ###############################################
 ###############################################
@@ -342,8 +405,16 @@ Typically, you would only do this once at the very end, but for this project it 
 
 # Make predictions on the test dataset
 # add code here
-
+test_pred_probs <- predict(model, test, type = "response")
+test_pred_binary <- ifelse(test_pred_probs > 0.5, 1, 0)
 # Compute F1
+true_pos_test  <- sum(test_pred_binary == 1 & test$incomplete == 1)
+false_pos_test <- sum(test_pred_binary == 1 & test$incomplete == 0)
+false_neg_test <- sum(test_pred_binary == 0 & test$incomplete == 1)
+
+precision_test <- true_pos_test / (true_pos_test + false_pos_test)
+recall_test    <- true_pos_test / (true_pos_test + false_neg_test)
+
 # add code here
 F1 = 2 / (1/recall + 1/precision)
 
