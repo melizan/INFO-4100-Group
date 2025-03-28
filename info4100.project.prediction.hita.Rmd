@@ -380,18 +380,6 @@ model_logit <- glm(incomplete ~ num_student_msgs + num_ai_msgs + avg_student_msg
 summary(model_logit)
 
 
-
-rf_model <- randomForest(
-  incomplete ~ num_student_msgs + num_ai_msgs + avg_student_msg_len +
-    duration_secs + num_days_active + prev_activities_started +
-    prev_activities_completed + completion_rate + conversation_initiations,
-  data = train,
-  ntree = 100,
-  importance = TRUE
-)
-
-
-
 train$pred_prob <- predict(model_logit, type = "response")
 train$pred_class <- ifelse(train$pred_prob > 0.1, 1, 0)
 
