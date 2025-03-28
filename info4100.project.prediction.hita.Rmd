@@ -15,7 +15,7 @@ editor_options:
 ```{r warning=FALSE, message=FALSE, echo=FALSE}
 library(tidyverse)
 # This loads 2 datasets: a=activities, con=conversations
-load("~/Desktop/info/info4100_hita_data.rda" )
+load("info4100_hita_data.rda")
 ```
 
 # Introduction
@@ -196,7 +196,7 @@ all_combinations <- all_combinations %>%
   ))
 
 completion_data <- all_combinations %>%
-  left_join(reading_activity %>% select(id, student_id, completed),
+  left_join(reading_activity %>% select(id, student_id, started, completed),
             by = c("student_id", "activity_id" = "id"))
 
 completion_data <- completion_data %>%
@@ -245,22 +245,7 @@ head(example_features)
 ############################################### 
 ###### BEGIN INPUT: Engineer features #########
 ###############################################
-#calculate_features <- function(target_deadline) {
- # completion_data %>%
-  #  filter(deadline < target_deadline) %>%
-   # group_by(student_id) %>%
-    #summarise(
-     # n_incomplete = sum(incomplete),
-      #avg_incomplete = mean(incomplete)
-    #)
-#}
-#test_features <- calculate_features("2025-03-01 05:00:00")
-#head(test_features)
-#completion_data %>%
-  #filter(deadline < current_activity_deadline) %>%
-  #group_by(student_id) %>%
-  #summarise(n_incomplete = sum(incomplete),
-    #avg_incomplete =mean(incomplete))
+
 
 library(tidyverse)
 library(lubridate)
@@ -268,39 +253,59 @@ library(lubridate)
 # Helper: 24 hours in seconds
 secs_in_day <- 60 * 60 * 24
 
-# Add cutoff timestamp to each row in your target dataset
-completion_data <- completion_data %>%
+zzz <- con %>%
+  mutate(activity_step_id = as.character(activity_step_id)) %>%
+  mutate(deadline = case_when(
+    activity_step_id == "7877f09d-5905-4c41-ae01-490a170b2ed0" ~ "2025-02-01 05:00:00",
+    activity_step_id == "5b586b96-beba-44fa-be38-b911f9af7f86" ~ "2025-02-08 05:00:00",
+    activity_step_id == "c5334167-f212-4d5d-9809-aaa3760097c6" ~ "2025-02-08 05:00:00",
+    activity_step_id == "7b005d82-6810-439b-a033-4832a253c3e6" ~ "2025-03-01 05:00:00",
+    activity_step_id == "4b76c702-78d0-4c5d-874c-5ee55a8b2921" ~ "2025-03-08 05:00:00"
+  ))
+
+zzz <- zzz %>%
   mutate(
+    timestamp = as.numeric(as.POSIXct(created_at, tz = "UTC")),
     cutoff_utc = as.numeric(as.POSIXct(deadline, tz = "UTC")) - secs_in_day
   )
 
-con <- con %>%
-  mutate(timestamp = as.numeric(as.POSIXct(created_at, tz = "UTC")))
+zzz_filtered <- zzz %>%
+  filter(timestamp < cutoff_utc)
 
-feature_data <- completion_data %>%
-  select(student_id, activity_id, cutoff_utc) %>%
-  pmap_dfr(function(student_id, activity_id, cutoff_utc) {
-    
-    con_sub <- con %>%
-      filter(student_id == student_id, timestamp < cutoff_utc)
-    
-    tibble(
-      student_id = student_id,
-      activity_id = activity_id,
-      num_total_msgs = nrow(con_sub),
-      num_student_msgs = sum(con_sub$system == 0),
-      num_ai_msgs = sum(con_sub$system == 1),
-      avg_student_msg_len = mean(con_sub$length_char[con_sub$system == 0], na.rm = TRUE),
-      num_chat_conversations = n_distinct(con_sub$conversation_id[is.na(con_sub$activity_step_id)]),
-      num_activity_msgs = sum(!is.na(con_sub$activity_step_id)),
-      num_unique_activities_chatted = n_distinct(con_sub$activity_step_id[!is.na(con_sub$activity_step_id)])
-    )
-  })
 
-final_data <- completion_data %>%
-  left_join(feature_data, by = c("student_id", "activity_id"))
 
-head(final_data)
+
+aaaa <- zzz_filtered %>%
+  filter(!is.na(activity_step_id), !is.na(deadline)) %>%
+  group_by(student_id, activity_step_id) %>%
+  summarise(
+    num_student_msgs = sum(system == 0),
+    num_ai_msgs = sum(system == 1),
+    avg_student_msg_len = mean(length_char[system == 0], na.rm = TRUE),
+    duration_secs = as.numeric(max(created_at) - min(created_at)),
+    num_days_active = n_distinct(as.Date(created_at))
+  )
+
+final_df <- completion_data %>%
+  mutate(activity_step_id = as.character(activity_id)) %>%
+  left_join(aaaa, by = c("student_id", "activity_step_id")) %>%
+  mutate(across(
+    .cols = c(num_student_msgs, num_ai_msgs, avg_student_msg_len, duration_secs, num_days_active),
+    .fns = ~replace_na(., 0)
+  ))
+
+history_features <- final_df %>%
+  group_by(student_id) %>%
+  summarise(
+    prev_activities_started = sum(started, na.rm = TRUE),
+    prev_activities_completed = sum(1 - incomplete, na.rm = TRUE),  # if 0 = completed
+    completion_rate = ifelse(prev_activities_started > 0,
+                             prev_activities_completed / prev_activities_started,
+                             0)
+  )
+
+final_df <- final_df %>%
+  left_join(history_features, by = "student_id")
 ###############################################
 ###############################################
 ```
@@ -339,10 +344,10 @@ week7_id <- final_data %>%
   pull(activity_id)
 
 # Step 3: Split into test (Week 7) and train (everything else)
-test <- final_data %>%
+test <- final_df %>%
   filter(activity_id == week7_id)
 
-train <- final_data %>%
+train <- final_df %>%
   filter(activity_id != week7_id)
 ###############################################
 ###############################################
@@ -363,35 +368,56 @@ Report your F1 score on the training data below (don't forget this!).
 
 # Fit  model to training data
 # add code here
-model <- glm(incomplete ~ num_student_msgs + avg_student_msg_len + num_chat_conversations +
-                               num_total_msgs + num_activity_msgs + num_unique_activities_chatted,
-             data = train, family = "binomial")
-# Now calculate TP/FP/FN again
+train <- train %>%
+  mutate(across(everything(), ~replace_na(., 0)))
 
-# Get predictions
-# add code here
-pred_probs <- predict(model, train, type = "response")
-pred_binary <- ifelse(pred_probs > 0.5, 1, 0)
+test <- test %>%
+  mutate(across(everything(), ~replace_na(., 0)))
 
-true_pos  <- sum(pred_binary == 1 & train$incomplete == 1)
-false_pos <- sum(pred_binary == 1 & train$incomplete == 0)
-false_neg <- sum(pred_binary == 0 & train$incomplete == 1)
 
-# Compute accuracy, recall, precision, and F1
-# add code here
-precision <- true_pos / (true_pos + false_pos)
-recall    <- true_pos / (true_pos + false_neg)
-F1 <- 2 / (1 / recall + 1 / precision)
-# Training F1 score is ...
-F1
+model_logit <- glm(incomplete ~ num_student_msgs + num_ai_msgs + avg_student_msg_len + duration_secs + num_days_active + prev_activities_started + prev_activities_completed + completion_rate + conversation_initiations, data = train, family = "binomial")
 
-print(true_pos)
-print(false_pos)
-print(false_neg)
+summary(model_logit)
 
-###############################################
+
+
+rf_model <- randomForest(
+  incomplete ~ num_student_msgs + num_ai_msgs + avg_student_msg_len +
+    duration_secs + num_days_active + prev_activities_started +
+    prev_activities_completed + completion_rate + conversation_initiations,
+  data = train,
+  ntree = 100,
+  importance = TRUE
+)
+
+
+
+train$pred_prob <- predict(model_logit, type = "response")
+train$pred_class <- ifelse(train$pred_prob > 0.1, 1, 0)
+
+pred <- train$pred_class
+actual <- train$incomplete
+
+tp <- sum(pred == 1 & actual == 1)
+fp <- sum(pred == 1 & actual == 0)
+fn <- sum(pred == 0 & actual == 1)
+
+precision <- tp / (tp + fp)
+recall <- tp / (tp + fn)
+
+f1 <- 2 * precision * recall / (precision + recall)
+
+f1
+print(tp)
+print(fn)
+print(fp)
+
+summary(train$pred_prob)
+
 ###############################################
 ```
+
+
 
 # Step 6: Test your model
 
@@ -405,22 +431,22 @@ Typically, you would only do this once at the very end, but for this project it 
 
 # Make predictions on the test dataset
 # add code here
-test_pred_probs <- predict(model, test, type = "response")
-test_pred_binary <- ifelse(test_pred_probs > 0.5, 1, 0)
+test$pred_probs <- predict(model_logit, test, type = "response")
+test$pred_binary <- ifelse(test_pred_probs > 0.1, 1, 0)
 # Compute F1
-true_pos_test  <- sum(test_pred_binary == 1 & test$incomplete == 1)
-false_pos_test <- sum(test_pred_binary == 1 & test$incomplete == 0)
-false_neg_test <- sum(test_pred_binary == 0 & test$incomplete == 1)
+true_pos_test  <- sum(test$pred_binary == 1 & test$incomplete == 1)
+false_pos_test <- sum(test$pred_binary == 1 & test$incomplete == 0)
+false_neg_test <- sum(test$pred_binary == 0 & test$incomplete == 1)
 
 precision_test <- true_pos_test / (true_pos_test + false_pos_test)
 recall_test    <- true_pos_test / (true_pos_test + false_neg_test)
 
 # add code here
-F1 = 2 / (1/recall + 1/precision)
+F1 = 2 / (1/recall_test + 1/precision_test)
 
 # Testing F1 score is ...
 F1
-
+table(test$pred_binary)
 ###############################################
 ###############################################
 ```
